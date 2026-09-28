@@ -1,4 +1,22 @@
-# terraform-provider-hue
+# terraform-provider-tychuepro
+
+**tychuepro** is light as code for Philips Hue: an OpenTofu provider, Bridge Pro first, several
+bridges at once. Work in progress: [PLAN.md](PLAN.md) holds the decisions and milestones,
+[HANDOVER.md](HANDOVER.md) the current state. Until milestone M0 renames it, the code and the
+upstream README below are still akr4's.
+
+This is a fork of [akr4/terraform-provider-hue](https://github.com/akr4/terraform-provider-hue)
+by akr4, forked at `f8e17db` (2026-09-26). The provider core, the fake bridge, the import tooling
+and the CLI are theirs; generic fixes are offered back upstream as pull requests. The licence stays
+MIT, with akr4's copyright kept ([LICENSE](LICENSE)).
+
+"Philips Hue" is a trademark of Signify. This project is not affiliated with or endorsed by
+Signify.
+
+---
+
+## Upstream README
+
 
 A Terraform provider for Philips Hue API v2, with a companion CLI, `hue-tf`.
 Manage rooms, zones, scenes, [smart scenes](docs/smart-scenes.md), switch
