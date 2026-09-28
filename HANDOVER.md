@@ -1,11 +1,11 @@
-# Handover — for the session that drives tychue
+# Handover — for the session that drives tychuepro
 
 Written 2026-09-29 by the planning session. Read [PLAN.md](PLAN.md) first; this file is the
 state, the facts behind the plan, and how to work here.
 
 ## State
 
-- `tyclab/terraform-provider-tychue` is a GitHub fork of `akr4/terraform-provider-hue` at
+- `tyclab/terraform-provider-tychuepro` is a GitHub fork of `akr4/terraform-provider-hue` at
   `f8e17db` (2026-09-26). Only `PLAN.md`, `HANDOVER.md` and `CLAUDE.md` are ours; every other
   file is still akr4's, including the names (`terraform-provider-hue`, `hue-tf`,
   `registry.terraform.io/akr4/hue`).
@@ -57,7 +57,7 @@ From the research (sources below):
 ## Start here
 
 1. M0 from PLAN.md, one pull request per step: rename (module path
-   `github.com/tyclab/terraform-provider-tychue`, provider type `tychue`, binaries, docs), make the
+   `github.com/tyclab/terraform-provider-tychuepro`, provider type `tychuepro`, binaries, docs), make the
    acceptance tests run `tofu`, add GitHub Actions, rewrite the README in English with akr4
    credited and the MIT licence kept.
 2. Start a `CHANGELOG.md` with the rename.
