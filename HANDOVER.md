@@ -9,15 +9,20 @@ state, the facts behind the plan, and how to work here.
   `f8e17db` (2026-09-26). Only `PLAN.md`, `HANDOVER.md` and `CLAUDE.md` are ours; every other
   file is still akr4's, including the names (`terraform-provider-hue`, `hue-tf`,
   `registry.terraform.io/akr4/hue`).
-- Nothing has been built, renamed or tested here yet. Start with M0.
+- Nothing has been built, renamed or tested here yet. Since 2026-10-25 the direction (rename, or
+  track upstream) is the open decision in PLAN.md: do not start M0 before it is ruled.
+- Upstream `main` is 31 commits past the fork point (v0.2.0, 2026-10-20); `go build ./...` and
+  `go test ./...` pass on it with Go 1.26 (fake-bridge acceptance tests included).
 
 ## Your environment
 
 - A cloud session has no access to the operator's network: no bridge, no Home Assistant, no
   secrets. Build and test against `internal/fakebridge`.
 - Whatever needs a real bridge becomes an exact command for the operator, with what it should
-  print; ask for its output. Real-bridge runs go to the spare Bridge v2 first, the Bridge Pro
-  (production) only after that.
+  print; ask for its output. Both bridges are production: the second bridge (BSB002) has
+  carried an entertainment area, part of one room's lamps and a dimmer since 2026-10-01. Imports
+  and plans are read-only and safe at any time; an apply needs a window with every entertainment
+  stream stopped, on either bridge.
 
 ## Verified facts
 
@@ -39,6 +44,15 @@ Read on 2026-09-28 from the operator's Bridge Pro through Home Assistant's Hue d
 - `entertainment_configuration`: 7 areas of 3 to 16 channels, types screen, monitor and music;
   the bridge's entertainment proxy reports `max_streams` 1.
 
+Read on 2026-10-25 from both bridges' public `/api/config`:
+
+- The Pro: BSB003, software 2071524040, CLIP 1.78.0. The second bridge: BSB002, software
+  1978418030, CLIP 1.78.0.
+- The lightshow (`src/server/hue.ts`) pairs with both bridges, requests a client key for DTLS and
+  creates, updates and deletes `entertainment_configuration` itself. Three operator scripts in the
+  home repository converge dimmer bindings, entertainment positions on the second bridge and light
+  power-up, each with a dry run.
+
 From the research (sources below):
 
 - Signify's CLIP v2 reference, migration guide and SDK pages need a developer login; there is no
@@ -56,7 +70,7 @@ From the research (sources below):
 
 ## Start here
 
-1. M0 from PLAN.md, one pull request per step: rename (module path
+1. Once PLAN.md's open decision is ruled for the rename: M0, one pull request per step: rename (module path
    `github.com/tyclab/terraform-provider-tychuepro`, provider type `tychuepro`, binaries, docs), make the
    acceptance tests run `tofu`, add GitHub Actions, rewrite the README in English with akr4
    credited and the MIT licence kept.
