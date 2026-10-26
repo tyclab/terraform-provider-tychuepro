@@ -5,14 +5,11 @@ state, the facts behind the plan, and how to work here.
 
 ## State
 
-- `tyclab/terraform-provider-tychuepro` is a GitHub fork of `akr4/terraform-provider-hue` at
-  `f8e17db` (2026-09-26). Only `PLAN.md`, `HANDOVER.md` and `CLAUDE.md` are ours; every other
-  file is still akr4's, including the names (`terraform-provider-hue`, `hue-tf`,
-  `registry.terraform.io/akr4/hue`).
-- Nothing has been built, renamed or tested here yet. Since 2026-10-25 the direction (rename, or
-  track upstream) is the open decision in PLAN.md: do not start M0 before it is ruled.
-- Upstream `main` is 31 commits past the fork point (v0.2.0, 2026-10-20); `go build ./...` and
-  `go test ./...` pass on it with Go 1.26 (fake-bridge acceptance tests included).
+- `tyclab/terraform-provider-tychuepro` is a GitHub fork of `akr4/terraform-provider-hue`. Only
+  `PLAN.md`, `HANDOVER.md` and `CLAUDE.md` are ours; it tracks upstream (PLAN.md, Decisions) and
+  carries branches for upstream pull requests only.
+- Upstream v0.2.0 builds and passes `go test ./...` with Go 1.26, fake-bridge acceptance tests
+  included. The home's bridges already run on it.
 
 ## Your environment
 
@@ -66,22 +63,19 @@ From the research (sources below):
   switch_input_configuration, geolocation and light power-up; read-only behavior_script.
 - aiohue (home-assistant-libs) checked its models against a live Bridge Pro in PR #657
   (July 2026); its motion-area update covers name and enabled.
-- The OpenTofu registry expects the repository `NAMESPACE/terraform-provider-NAME`.
 
 ## Start here
 
-1. Once PLAN.md's open decision is ruled for the rename: M0, one pull request per step: rename (module path
-   `github.com/tyclab/terraform-provider-tychuepro`, provider type `tychuepro`, binaries, docs), make the
-   acceptance tests run `tofu`, add GitHub Actions, rewrite the README in English with akr4
-   credited and the MIT licence kept.
-2. Start a `CHANGELOG.md` with the rename.
-3. Then M1 and M2. For the Bridge Pro resources, write fake-bridge fixtures with synthetic ids and
-   values that follow the shapes above, and ask the operator for a values-free shape dump of any
-   resource you need.
+1. U1 from PLAN.md: branch off upstream `main`, one resource per pull request. Write fake-bridge
+   fixtures with synthetic ids and values that follow the shapes above, and ask the operator for a
+   values-free shape dump of any resource you need.
+2. Open the pull request against akr4/terraform-provider-hue; keep the branch rebased until it
+   merges.
+3. Then U2, light power-up.
 
 ## Rules
 
-- tofu, never terraform, in everything we write; the repository name is the registry's exception.
+- tofu, never terraform, in everything we write.
 - No secrets, bridge ids, addresses, room or device names, or personal names in commits, fixtures,
   examples or issues. Fixtures use synthetic values.
 - Never paste text or schemas from Signify's reference.
