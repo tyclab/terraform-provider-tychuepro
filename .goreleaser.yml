@@ -14,6 +14,9 @@ builds:
 archives:
   - formats: [zip]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+# The Registry rejects a release that has a file this SHA256SUMS does not list,
+# and reads every archive it lists as a provider package. hue-tf therefore has
+# its own configuration and release.
 checksum:
   extra_files:
     - glob: terraform-registry-manifest.json
@@ -25,7 +28,7 @@ signs:
     args: [--batch, --local-user, '{{ .Env.GPG_FINGERPRINT }}', --output, '${signature}', --detach-sign, '${artifact}']
 release:
   draft: true
-  # The CLI configuration uploads to the same draft; reruns reuse it too.
+  # A rerun uploads to the same draft.
   use_existing_draft: true
   extra_files:
     - glob: terraform-registry-manifest.json

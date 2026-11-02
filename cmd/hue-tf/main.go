@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -17,6 +18,34 @@ import (
 	"github.com/akr4/terraform-provider-hue/internal/hue"
 	"github.com/grandcat/zeroconf"
 )
+
+// version is set at release time with -ldflags "-X main.version=...".
+var version = "dev"
+
+const usageText = `Usage: hue-tf COMMAND [ARGUMENTS]
+
+Commands:
+  init                     Create an application key; press the bridge's link button
+  discover                 Find bridges on the local network and print their addresses and IDs
+  ls TYPE [--json]         List room, zone, scene, smart_scene, light, device, switch,
+                           behavior_instance, behavior_script or button resources
+  show SCENE_UUID          Show a scene and what references it
+  recall SCENE_UUID [--action ACTION]
+                           Activate a scene
+  identify UUID [--count N]
+                           Make a device or light signal
+  raw /clip/v2/PATH        Print the response of an API v2 GET request
+  preview [PLAN_JSON|-] [--html] [--all] [--output FILE]
+                           Render scene colors from a Terraform plan
+  import-blocks [UUID | RESOURCE_ADDRESS ...] [--module NAME[.NAME...]] [--write]
+                           Generate import blocks for unmanaged resources
+  migrate [DIR ...] [--write]
+                           Rewrite configurations for provider 0.2.0
+  version                  Print the version
+
+Commands that contact the bridge read HUE_BRIDGE_HOST, HUE_BRIDGE_ID and
+HUE_BRIDGE_APPLICATION_KEY. hue-tf init prints all three.
+`
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -32,16 +61,28 @@ type dependencies struct {
 	wait      func(context.Context, time.Duration) error
 	terraform func(context.Context, ...string) ([]byte, error)
 	readState func(context.Context) ([]byte, error)
-	newClient func(string, string) (*hue.Client, error)
-	discover  func(context.Context) ([]string, error)
+	newClient func(host, key, bridgeID string) (*hue.Client, error)
+	discover  func(context.Context) ([]bridge, error)
+	// observe reads the bridge ID from a bridge's certificate on first contact.
+	observe func(ctx context.Context, host string) (string, error)
+	// linkTimeout bounds how long init waits for the link button; zero means 60 seconds.
+	linkTimeout time.Duration
 }
 
 func run(ctx context.Context, args []string, out, errout io.Writer) error {
-	return runWith(ctx, args, out, errout, dependencies{newClient: hue.NewClient, discover: discover})
+	return runWith(ctx, args, out, errout, dependencies{newClient: hue.NewClient, discover: discover, observe: hue.ObserveBridgeID})
 }
 func runWith(ctx context.Context, args []string, out, errout io.Writer, deps dependencies) error {
 	if len(args) == 0 {
-		return errors.New("usage: hue-tf init | ls <room|zone|scene|smart_scene|light|device|switch|behavior_instance|behavior_script|button> [--json] | show SCENE_UUID | recall SCENE_UUID [--action ACTION] | identify DEVICE_UUID_OR_LIGHT_UUID [--count N] | raw /clip/v2/<path> | preview [PLAN_JSON|-] [--html] [--all] [--output FILE] | import-blocks [UUID | RESOURCE_ADDRESS ...] [--module NAME[.NAME...]] [--write]")
+		return errors.New(strings.TrimSpace(usageText))
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		_, err := fmt.Fprint(out, usageText)
+		return err
+	case "version", "--version":
+		_, err := fmt.Fprintln(out, "hue-tf", versionString())
+		return err
 	}
 	if args[0] == "preview" {
 		return previewCommand(args[1:], deps.stdin, out)
@@ -51,6 +92,9 @@ func runWith(ctx context.Context, args []string, out, errout io.Writer, deps dep
 	}
 	if args[0] == "import-blocks" {
 		return importBlocksCommand(ctx, args[1:], out, deps)
+	}
+	if args[0] == "migrate" {
+		return migrateCommand(args[1:], out)
 	}
 	if args[0] == "recall" || args[0] == "identify" {
 		return operate(ctx, args[0], args[1:], out, deps)
@@ -64,8 +108,30 @@ func runWith(ctx context.Context, args []string, out, errout io.Writer, deps dep
 		}
 		return initialize(ctx, out, errout, deps)
 	}
+	if args[0] == "discover" {
+		if len(args) != 1 {
+			return errors.New("usage: hue-tf discover")
+		}
+		bridges, err := deps.discover(ctx)
+		if err != nil {
+			return err
+		}
+		if len(bridges) == 0 {
+			return errors.New("no bridge discovered on the local network")
+		}
+		table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(table, "ADDRESS\tBRIDGE ID")
+		for _, b := range bridges {
+			id := b.ID
+			if id == "" {
+				id = "-"
+			}
+			fmt.Fprintf(table, "%s\t%s\n", b.Host, id)
+		}
+		return table.Flush()
+	}
 	if args[0] != "raw" && args[0] != "ls" {
-		return fmt.Errorf("unknown command %q", args[0])
+		return fmt.Errorf("unknown command %q; run hue-tf --help", args[0])
 	}
 	if len(args) < 2 || len(args) > 3 {
 		return errors.New("expected a resource type or v2 path")
@@ -83,11 +149,7 @@ func runWith(ctx context.Context, args []string, out, errout io.Writer, deps dep
 			return errors.New("unknown flag")
 		}
 	}
-	host, key := os.Getenv("HUE_BRIDGE_HOST"), os.Getenv("HUE_BRIDGE_APPLICATION_KEY")
-	if key == "" {
-		return errors.New("HUE_BRIDGE_APPLICATION_KEY is required; run hue-tf init")
-	}
-	client, err := deps.newClient(host, key)
+	client, err := clientFromEnv(deps)
 	if err != nil {
 		return err
 	}
@@ -191,7 +253,10 @@ func tableText(value string) string {
 	}, value)
 }
 
-func discover(ctx context.Context) ([]string, error) {
+// bridge is an address found by mDNS, with the bridge ID that it advertised.
+type bridge struct{ Host, ID string }
+
+func discover(ctx context.Context) ([]bridge, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		return nil, err
@@ -202,76 +267,145 @@ func discover(ctx context.Context) ([]string, error) {
 	if err := resolver.Browse(ctx, "_hue._tcp", "local.", entries); err != nil {
 		return nil, err
 	}
-	hosts := map[string]bool{}
+	found := map[string]string{}
 	for {
 		select {
 		case entry, ok := <-entries:
 			if !ok {
-				return sortedHosts(hosts), nil
+				return sortedBridges(found), nil
+			}
+			id := ""
+			for _, txt := range entry.Text {
+				if value, ok := strings.CutPrefix(txt, "bridgeid="); ok {
+					id, _ = hue.ParseBridgeID(value)
+				}
 			}
 			for _, ip := range entry.AddrIPv4 {
-				hosts[ip.String()] = true
+				found[ip.String()] = id
 			}
 			if len(entry.AddrIPv4) > 0 {
 				continue
 			}
 			for _, ip := range entry.AddrIPv6 {
 				if !ip.IsLinkLocalUnicast() {
-					hosts[ip.String()] = true
+					found[ip.String()] = id
 				}
 			}
 		case <-ctx.Done():
-			return sortedHosts(hosts), nil
+			return sortedBridges(found), nil
 		}
 	}
 }
-func sortedHosts(hosts map[string]bool) []string {
-	result := []string{}
-	for host := range hosts {
+func sortedBridges(found map[string]string) []bridge {
+	result := []bridge{}
+	for host, id := range found {
 		if net.ParseIP(host) != nil {
-			result = append(result, host)
+			result = append(result, bridge{Host: host, ID: id})
 		}
 	}
-	sort.Strings(result)
+	sort.Slice(result, func(i, j int) bool { return result[i].Host < result[j].Host })
 	return result
+}
+
+// versionString falls back to the module version for go install builds.
+func versionString() string {
+	info, _ := debug.ReadBuildInfo()
+	return buildVersion(version, info)
+}
+
+// buildVersion drops the module version's v, as release builds print 0.1.0.
+func buildVersion(version string, info *debug.BuildInfo) string {
+	if version != "dev" {
+		return version
+	}
+	if info != nil && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return version
+}
+
+// clientFromEnv connects to the bridge named by the environment.
+func clientFromEnv(deps dependencies) (*hue.Client, error) {
+	host, id, key := os.Getenv("HUE_BRIDGE_HOST"), os.Getenv("HUE_BRIDGE_ID"), os.Getenv("HUE_BRIDGE_APPLICATION_KEY")
+	if key == "" {
+		return nil, errors.New("HUE_BRIDGE_APPLICATION_KEY is not set; run hue-tf init")
+	}
+	if host == "" {
+		return nil, errors.New("HUE_BRIDGE_HOST is not set; run hue-tf discover to find the bridge's address")
+	}
+	if id == "" {
+		return nil, errors.New("HUE_BRIDGE_ID is not set; run hue-tf discover to find the bridge's ID")
+	}
+	return deps.newClient(host, key, id)
 }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 func initialize(ctx context.Context, out, errout io.Writer, deps dependencies) error {
-	host := os.Getenv("HUE_BRIDGE_HOST")
+	host, id := os.Getenv("HUE_BRIDGE_HOST"), os.Getenv("HUE_BRIDGE_ID")
 	if host == "" {
-		hosts, err := deps.discover(ctx)
+		bridges, err := deps.discover(ctx)
 		if err != nil {
 			return err
 		}
-		if len(hosts) == 0 {
+		if len(bridges) == 0 {
 			return errors.New("no bridge discovered; set HUE_BRIDGE_HOST to its IP address")
 		}
-		if len(hosts) > 1 {
+		if len(bridges) > 1 {
+			hosts := []string{}
+			for _, b := range bridges {
+				hosts = append(hosts, b.Host)
+			}
 			return fmt.Errorf("multiple bridge addresses found (%s); set HUE_BRIDGE_HOST to select one", strings.Join(hosts, ", "))
 		}
-		host = hosts[0]
+		host = bridges[0].Host
+		if id == "" {
+			id = bridges[0].ID
+		}
 	}
-	client, err := deps.newClient(host, "")
+	if id == "" {
+		// First contact: trust the ID in the certificate the bridge presents,
+		// which must still chain to the Hue root CA.
+		observed, err := deps.observe(ctx, host)
+		if err != nil {
+			return fmt.Errorf("cannot read the bridge ID from %s: %w", host, err)
+		}
+		id = observed
+	}
+	client, err := deps.newClient(host, "", id)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(errout, "Press the link button on bridge %s within 60 seconds.\n", host)
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := deps.linkTimeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	fmt.Fprintf(errout, "Press the link button on bridge %s within %v.\n", host, timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	reached := false
+	expired := func(err error) error {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if reached {
+			return fmt.Errorf("the link button on bridge %s was not pressed within %v; run hue-tf init again", host, timeout)
+		}
+		return fmt.Errorf("could not reach bridge %s within %v: %w", host, timeout, err)
+	}
 	for {
 		key, pending, err := client.Register(ctx)
 		if err != nil {
-			return err
+			return expired(err)
 		}
+		reached = true
 		if !pending {
-			_, err = fmt.Fprintf(out, "export HUE_BRIDGE_HOST=%s\nexport HUE_BRIDGE_APPLICATION_KEY=%s\n", shellQuote(host), shellQuote(key))
+			_, err = fmt.Fprintf(out, "export HUE_BRIDGE_HOST=%s\nexport HUE_BRIDGE_ID=%s\nexport HUE_BRIDGE_APPLICATION_KEY=%s\n", shellQuote(host), shellQuote(id), shellQuote(key))
 			return err
 		}
 		timer := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return expired(ctx.Err())
 		case <-timer.C:
 		}
 	}

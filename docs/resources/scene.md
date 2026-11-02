@@ -17,23 +17,56 @@ data "hue_light" "desk" {
   id = "11111111-1111-4111-8111-111111111111"
 }
 
-resource "hue_room" "study" {
-  name     = "Study"
-  children = [data.hue_light.desk.device_id]
+data "hue_light" "strip" {
+  id = "33333333-3333-4333-8333-333333333333"
+}
+
+resource "hue_zone" "desk" {
+  name     = "Desk"
+  children = [data.hue_light.desk.id, data.hue_light.strip.id]
 }
 
 resource "hue_scene" "evening" {
   name  = "Evening"
-  group = hue_room.study.id
+  group = hue_zone.desk.id
   actions = {
     (data.hue_light.desk.id) = {
       on         = true
       brightness = 40
-      kelvin     = 2700
+      mirek      = provider::hue::mirek_from_kelvin(2700)
+      dynamics   = { duration = 800 }
     }
+    (data.hue_light.strip.id) = {
+      on         = true
+      brightness = 60
+      gradient = {
+        points = [
+          provider::hue::color_from_hex("#ff8800").color_xy,
+          provider::hue::color_from_hex("#3355ff").color_xy,
+        ]
+      }
+    }
+  }
+  palette = {
+    color = [
+      provider::hue::color_from_hex("#ff8800"),
+      provider::hue::color_from_hex("#3355ff"),
+    ]
   }
   speed        = 0.6
   auto_dynamic = false
+}
+
+resource "hue_scene" "fireplace" {
+  name  = "Fireplace"
+  group = hue_zone.desk.id
+  actions = {
+    (data.hue_light.desk.id) = {
+      on         = true
+      brightness = 60
+      effects_v2 = { effect = "candle", parameters = { speed = 0.4 } }
+    }
+  }
 }
 ```
 
@@ -42,14 +75,14 @@ resource "hue_scene" "evening" {
 
 ### Required
 
-- `actions` (Attributes Map) Actions keyed by light UUID. (see [below for nested schema](#nestedatt--actions))
+- `actions` (Attributes Map) Actions keyed by light UUID. An update sends every action whole, so fields in an action that the provider does not model are removed. (see [below for nested schema](#nestedatt--actions))
 - `group` (String) Room or zone UUID. Changes replace the scene.
 - `name` (String) Scene name.
 
 ### Optional
 
 - `auto_dynamic` (Boolean) Enable dynamic playback. Defaults to false.
-- `palette` (String) Scene palette as a JSON object; use jsonencode. Independent of actions. Preserved on the bridge when omitted. Specify empty palette arrays to clear it.
+- `palette` (Attributes) Colors, color temperatures, brightness and effects that dynamic playback cycles through. Lists that you leave out are empty. Preserved on the bridge when omitted. (see [below for nested schema](#nestedatt--palette))
 - `speed` (Number) Dynamic scene speed from 0 to 1.
 
 ### Read-Only
@@ -61,18 +94,153 @@ resource "hue_scene" "evening" {
 
 Optional:
 
-- `brightness` (Number) Brightness from 0 to 100.
-- `color_xy` (Attributes) CIE xy chromaticity. Brightness is configured separately. (see [below for nested schema](#nestedatt--actions--color_xy))
-- `dynamics` (String) Light transition settings as a JSON object; use jsonencode({ duration = 800 }) for milliseconds. Preserved from the bridge when omitted.
-- `effects` (String) Effect action as a JSON object; use jsonencode. Preserved from the bridge when omitted.
-- `effects_v2` (String) Effect v2 action and parameters as a JSON object; use jsonencode. Preserved from the bridge when omitted. Use action.effect = no_effect to stop an effect.
-- `gradient` (String) Gradient action as a JSON object; use jsonencode. Preserved from the bridge when omitted.
-- `kelvin` (Number) Positive color temperature in kelvin. Converted to mirek and bounded to the API range 50–1000; individual lights may further limit it. Conflicts with mirek.
-- `mirek` (Number) Color temperature, 50–1000 mirek. Individual lights may support a narrower range. Conflicts with kelvin; may omit both.
+- `brightness` (Number) Brightness from 0 to 100, rounded to two decimal places.
+- `color_xy` (Attributes) CIE xy chromaticity, rounded to four decimal places. Brightness is configured separately. (see [below for nested schema](#nestedatt--actions--color_xy))
+- `dynamics` (Attributes) Transition when the scene is recalled. Preserved from the bridge when omitted. (see [below for nested schema](#nestedatt--actions--dynamics))
+- `effects` (String) The API's deprecated effects as a JSON object; use jsonencode. Use effects_v2 instead. Preserved from the bridge when omitted.
+- `effects_v2` (Attributes) Effect, the action of the API's effects_v2. Preserved from the bridge when omitted. Use effect = "no_effect" to stop an effect. (see [below for nested schema](#nestedatt--actions--effects_v2))
+- `gradient` (Attributes) Gradient for lights that support one. Preserved from the bridge when omitted. (see [below for nested schema](#nestedatt--actions--gradient))
+- `kelvin` (Number, Deprecated) Removed in 0.2.0, and an error when set. Use mirek instead; provider::hue::mirek_from_kelvin converts kelvin.
+- `mirek` (Number) Color temperature, 50–1000 mirek. Individual lights may support a narrower range. Use provider::hue::mirek_from_kelvin for kelvin.
 - `on` (Boolean) On/off state.
 
 <a id="nestedatt--actions--color_xy"></a>
 ### Nested Schema for `actions.color_xy`
+
+Required:
+
+- `x` (Number)
+- `y` (Number)
+
+
+<a id="nestedatt--actions--dynamics"></a>
+### Nested Schema for `actions.dynamics`
+
+Required:
+
+- `duration` (Number) Transition time in milliseconds. 0 changes the light at once.
+
+
+<a id="nestedatt--actions--effects_v2"></a>
+### Nested Schema for `actions.effects_v2`
+
+Required:
+
+- `effect` (String) Effect name: prism, opal, glisten, sparkle, fire, candle, underwater, cosmos, sunbeam, enchant or no_effect.
+
+Optional:
+
+- `parameters` (Attributes) Effect parameters. (see [below for nested schema](#nestedatt--actions--effects_v2--parameters))
+
+<a id="nestedatt--actions--effects_v2--parameters"></a>
+### Nested Schema for `actions.effects_v2.parameters`
+
+Optional:
+
+- `color_xy` (Attributes) Effect color as CIE xy, rounded to four decimal places. (see [below for nested schema](#nestedatt--actions--effects_v2--parameters--color_xy))
+- `mirek` (Number) Effect color temperature, 50–1000 mirek.
+- `speed` (Number) Effect speed from 0 to 1.
+
+<a id="nestedatt--actions--effects_v2--parameters--color_xy"></a>
+### Nested Schema for `actions.effects_v2.parameters.color_xy`
+
+Required:
+
+- `x` (Number)
+- `y` (Number)
+
+
+
+
+<a id="nestedatt--actions--gradient"></a>
+### Nested Schema for `actions.gradient`
+
+Required:
+
+- `points` (Attributes List) Two to five colors as CIE xy, rounded to four decimal places. provider::hue::color_from_hex(...).color_xy returns one. (see [below for nested schema](#nestedatt--actions--gradient--points))
+
+Optional:
+
+- `mode` (String) How the points are spread: interpolated_palette, interpolated_palette_mirrored, random_pixelated or segmented_palette. Defaults to interpolated_palette, as in the API.
+
+<a id="nestedatt--actions--gradient--points"></a>
+### Nested Schema for `actions.gradient.points`
+
+Required:
+
+- `x` (Number)
+- `y` (Number)
+
+
+
+
+<a id="nestedatt--palette"></a>
+### Nested Schema for `palette`
+
+Optional:
+
+- `color` (Attributes List) Up to nine colors, each with a brightness. provider::hue::color_from_hex returns one. (see [below for nested schema](#nestedatt--palette--color))
+- `color_temperature` (Attributes List) At most one color temperature with a brightness. (see [below for nested schema](#nestedatt--palette--color_temperature))
+- `dimming` (Attributes List) At most one brightness. (see [below for nested schema](#nestedatt--palette--dimming))
+- `effects_v2` (Attributes List) Up to three effects. (see [below for nested schema](#nestedatt--palette--effects_v2))
+
+<a id="nestedatt--palette--color"></a>
+### Nested Schema for `palette.color`
+
+Required:
+
+- `brightness` (Number) Brightness from 0 to 100, rounded to two decimal places.
+- `color_xy` (Attributes) CIE xy chromaticity, rounded to four decimal places. (see [below for nested schema](#nestedatt--palette--color--color_xy))
+
+<a id="nestedatt--palette--color--color_xy"></a>
+### Nested Schema for `palette.color.color_xy`
+
+Required:
+
+- `x` (Number)
+- `y` (Number)
+
+
+
+<a id="nestedatt--palette--color_temperature"></a>
+### Nested Schema for `palette.color_temperature`
+
+Required:
+
+- `brightness` (Number) Brightness from 0 to 100, rounded to two decimal places.
+- `mirek` (Number) Color temperature, 50–1000 mirek. Use provider::hue::mirek_from_kelvin for kelvin.
+
+
+<a id="nestedatt--palette--dimming"></a>
+### Nested Schema for `palette.dimming`
+
+Required:
+
+- `brightness` (Number) Brightness from 0 to 100, rounded to two decimal places.
+
+
+<a id="nestedatt--palette--effects_v2"></a>
+### Nested Schema for `palette.effects_v2`
+
+Required:
+
+- `effect` (String) Effect name: prism, opal, glisten, sparkle, fire, candle, underwater, cosmos, sunbeam, enchant or no_effect.
+
+Optional:
+
+- `parameters` (Attributes) Effect parameters. (see [below for nested schema](#nestedatt--palette--effects_v2--parameters))
+
+<a id="nestedatt--palette--effects_v2--parameters"></a>
+### Nested Schema for `palette.effects_v2.parameters`
+
+Optional:
+
+- `color_xy` (Attributes) Effect color as CIE xy, rounded to four decimal places. (see [below for nested schema](#nestedatt--palette--effects_v2--parameters--color_xy))
+- `mirek` (Number) Effect color temperature, 50–1000 mirek.
+- `speed` (Number) Effect speed from 0 to 1.
+
+<a id="nestedatt--palette--effects_v2--parameters--color_xy"></a>
+### Nested Schema for `palette.effects_v2.parameters.color_xy`
 
 Required:
 

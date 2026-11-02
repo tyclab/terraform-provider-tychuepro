@@ -1,14 +1,14 @@
 # terraform-provider-tychuepro
 
-**tychuepro** is light as code for Philips Hue: an OpenTofu provider, Bridge Pro first, several
-bridges at once. Work in progress: [PLAN.md](PLAN.md) holds the decisions and milestones,
-[HANDOVER.md](HANDOVER.md) the current state. Until milestone M0 renames it, the code and the
-upstream README below are still akr4's.
+**tychuepro** is a staging fork of akr4's Philips Hue provider for upstream contributions,
+including Bridge Pro resources and light power-up. It tracks upstream without a provider rename,
+separate releases or its own registry listing. [PLAN.md](PLAN.md) holds the contribution plan and
+[HANDOVER.md](HANDOVER.md) the working context.
 
 This is a fork of [akr4/terraform-provider-hue](https://github.com/akr4/terraform-provider-hue)
 by akr4, forked at `f8e17db` (2026-09-26). The provider core, the fake bridge, the import tooling
 and the CLI are theirs; generic fixes are offered back upstream as pull requests. The licence stays
-MIT, with akr4's copyright kept ([LICENSE](LICENSE)).
+MIT, with upstream and fork attribution kept ([LICENSE](LICENSE)).
 
 "Philips Hue" is a trademark of Signify. This project is not affiliated with or endorsed by
 Signify.
@@ -25,30 +25,67 @@ behaviors, and device names and icons.
 **Add lights and devices using the Hue app. This provider manages resources that
 are already registered on a Hue bridge.**
 
-## Installation
+Scene colors can be written in hex, and color temperatures in kelvin:
 
-The provider is not yet published to the Terraform Registry. Build it with Go
-1.26 or later:
-
-```sh
-make build   # bin/terraform-provider-hue and bin/hue-tf
+```hcl
+resource "hue_scene" "evening" {
+  name  = "Evening"
+  group = "dddddddd-dddd-4ddd-8ddd-dddddddddddd" # Living room
+  actions = {
+    # Sofa lamp
+    "11111111-1111-4111-8111-111111111111" = {
+      on         = true
+      brightness = 40
+      mirek      = provider::hue::mirek_from_kelvin(2500)
+    }
+    # Shelf light
+    "22222222-2222-4222-8222-222222222222" = merge(
+      provider::hue::color_from_hex("#ff8800"),
+      { on = true, brightness = 60 },
+    )
+    # TV backlight
+    "44444444-4444-4444-8444-444444444444" = merge(
+      provider::hue::color_from_hex("#8a2be2"),
+      { on = true, brightness = 50 },
+    )
+  }
+}
 ```
 
-Then add a [`dev_overrides`](https://developer.hashicorp.com/terraform/cli/config/config-file#development-overrides-for-provider-developers)
-entry for `registry.terraform.io/akr4/hue` pointing to the absolute path of `bin`
-in your Terraform CLI configuration. `terraform init` is not needed.
+<img src="docs/images/plan.png" width="720" alt="terraform plan output for this scene, whose three lights were at 4000 K: the sofa lamp becomes warmer and dimmer, and the shelf light and the TV backlight change to the colors of the hex values">
 
-## Authentication
+## Getting started
+
+### 1. Install
+
+`terraform init` installs the provider from the
+[Terraform Registry](https://registry.terraform.io/providers/akr4/hue/latest).
+The examples use provider functions, which need Terraform 1.8 or later.
+
+Download `hue-tf` for your platform from the
+[latest release](https://github.com/akr4/terraform-provider-hue/releases/latest).
+If macOS says it cannot verify `hue-tf`, run
+`xattr -d com.apple.quarantine hue-tf`. With Go 1.26 or later, you can run
+`go install github.com/akr4/terraform-provider-hue/cmd/hue-tf@latest` instead.
+
+### 2. Connect to the bridge
 
 ```sh
-./bin/hue-tf init
-# Press the bridge link button, then run the two printed export commands.
+hue-tf init
+# Press the bridge's link button, then run the three printed export commands.
 ```
 
-The provider and CLI read `HUE_BRIDGE_HOST` (IP address or hostname) and
-`HUE_BRIDGE_APPLICATION_KEY`. Protect the key like a password.
+The provider and CLI read `HUE_BRIDGE_HOST` (IP address or hostname),
+`HUE_BRIDGE_ID` and `HUE_BRIDGE_APPLICATION_KEY`, and connect only to the
+bridge whose certificate carries that ID. Protect the key like a password. If
+the bridge's address changes later, `hue-tf discover` prints the current one
+and the ID without creating a new key.
 
-## Example
+### 3. Try a zone and a scene
+
+A zone groups lights without taking them out of their rooms, so trying one
+leaves your setup as it was. Pick a light from `hue-tf ls light` and put its
+UUID in `main.tf`:
 
 ```hcl
 terraform {
@@ -63,54 +100,137 @@ data "hue_light" "desk" {
   id = "11111111-1111-4111-8111-111111111111" # A light UUID from `hue-tf ls light`.
 }
 
-resource "hue_room" "study" {
-  name      = "Study"
-  archetype = "office"
-  children  = [data.hue_light.desk.device_id]
+resource "hue_zone" "trial" {
+  name     = "Terraform trial"
+  children = [data.hue_light.desk.id]
 }
 
 resource "hue_scene" "evening" {
   name  = "Evening"
-  group = hue_room.study.id
+  group = hue_zone.trial.id
   actions = {
     (data.hue_light.desk.id) = {
       on         = true
       brightness = 40
-      kelvin     = 2700
+      mirek      = provider::hue::mirek_from_kelvin(2700)
     }
   }
 }
+
+output "scene_id" {
+  value = hue_scene.evening.id
+}
 ```
 
-Rooms contain **device** UUIDs; zones contain **light** UUIDs; scene actions are
-keyed by light UUID. Destroying a resource deletes it from the bridge, except
-`hue_device`, which only stops managing the device.
+```sh
+terraform init
+terraform apply                                    # Creates the zone and the scene
+hue-tf recall "$(terraform output -raw scene_id)"  # Turns the light on in warm white
+terraform destroy                                  # Deletes the zone and the scene
+```
 
-See [resources](docs/resources) and [data sources](docs/data-sources) for the
-full reference.
+Until you destroy them, the zone and the scene also show in the Hue app.
+
+### 4. Manage what you made in the Hue app
+
+Start from a `main.tf` that has only the `terraform` and `provider` blocks.
+`hue-tf import-blocks` writes `import` blocks for every room, zone, scene, smart
+scene and behavior instance that Terraform does not manage yet. Terraform then
+writes their definitions:
+
+```sh
+hue-tf import-blocks --write
+terraform plan -generate-config-out=generated.tf
+terraform apply
+```
+
+Check that the plan only imports, then apply. From then on, Terraform manages
+these resources, and removing one from the configuration deletes it from the
+bridge. To import only some resources or import into modules, see
+[Generate import blocks](docs/app-to-terraform.md). For switches, see
+[switch management](docs/switch-management.md).
+
+## Resources
+
+Rooms contain **device** UUIDs; zones contain **light** UUIDs; scene actions are
+keyed by light UUID. A device belongs to one room, so adding it to a room moves
+it out of its current room. Destroying a resource deletes it from the bridge,
+except `hue_device`, which only stops managing the device.
+
+See [resources](docs/resources), [data sources](docs/data-sources) and
+[functions](docs/functions) for the full reference.
+
+### Scene colors
+
+A scene action takes a color as CIE xy (`color_xy`) or a color temperature in
+mirek (`mirek`), and `brightness` from 0 to 100. Provider functions convert from
+familiar notations:
+
+```hcl
+actions = {
+  (data.hue_light.shelf.id) = merge(provider::hue::color_from_hex("#ff8800"), { on = true })
+  (data.hue_light.sofa.id)  = { on = true, brightness = 40, mirek = provider::hue::mirek_from_kelvin(2700) }
+}
+```
+
+`color_from_hex` returns `color_xy` and `brightness`. It reads hex with the
+Philips Wide RGB D65 formula, which reaches the full gamut of Hue lights, so a
+color can look more saturated on a light than on a screen. Brightness is the
+largest RGB channel: `#ff8800` is 100 and `#7f4400` is 49.8. Put the function
+first in `merge`, so that the settings after it win:
+`merge(provider::hue::color_from_hex("#ff8800"), { on = true, brightness = 40 })`
+keeps the color and sets the brightness to 40.
+
+Dynamic playback cycles through `palette`, which takes the same colors:
+
+```hcl
+palette = {
+  color = [
+    provider::hue::color_from_hex("#ff8800"),
+    provider::hue::color_from_hex("#3355ff"),
+  ]
+}
+```
+
+In 0.1, `palette`, `gradient`, `effects_v2` and `dynamics` took JSON strings,
+and actions took `kelvin`. [Upgrading to 0.2.0](docs/guides/upgrade-0.2.0.md)
+describes how `hue-tf migrate` rewrites them.
 
 ## CLI
 
 | Command | Description |
 |---|---|
+| `hue-tf discover` | Find bridges on the local network and print their addresses and IDs |
 | `hue-tf ls TYPE [--json]` | List bridge resources such as `light`, `device`, `room`, `scene` and `switch` |
 | `hue-tf show SCENE_UUID` | [Inspect a scene](docs/show.md) and what references it |
 | `hue-tf raw /clip/v2/PATH` | Print the response of an API v2 GET request |
 | `hue-tf import-blocks [--write]` | [Generate `import` blocks](docs/app-to-terraform.md) for unmanaged resources |
+| `hue-tf migrate [DIR ...] [--write]` | [Rewrite configurations for 0.2.0](docs/guides/upgrade-0.2.0.md) |
 | `hue-tf preview` | [Render scene colors](docs/preview.md) from a Terraform plan |
 | `hue-tf recall SCENE_UUID` | [Activate a scene](docs/runtime-commands.md) |
 | `hue-tf identify UUID` | [Make a device signal](docs/runtime-commands.md) so you can find it |
 
-To import existing resources, run `hue-tf import-blocks --write`, then
-`terraform plan -generate-config-out=generated.tf`. For switches, see
-[switch management](docs/switch-management.md).
+`hue-tf preview` shows each light's color in a scene before and after a plan,
+in the terminal or as an HTML page. Here it shows the plan at the top of this
+page:
+
+<img src="docs/images/preview-terminal.png" width="720" alt="hue-tf preview in a terminal, showing the colors of the scene's three lights before and after the plan">
+
+<img src="docs/images/preview-html.png" width="720" alt="The HTML page that hue-tf preview writes for the same plan">
 
 ## Development
 
 ```sh
+make build               # bin/terraform-provider-hue and bin/hue-tf
+lefthook install         # Git hooks: gitleaks, gofmt, terraform fmt, go vet
 TF_ACC=1 go test ./...   # Unit and acceptance tests against a fake bridge
-make docs                # Regenerate the reference docs from the schema
+make docs                # Regenerate the reference docs from the schema and templates
 ```
+
+To use a local build of the provider, add a
+[`dev_overrides`](https://developer.hashicorp.com/terraform/cli/config/config-file#development-overrides-for-provider-developers)
+entry for `registry.terraform.io/akr4/hue` pointing to the absolute path of
+`bin` in your Terraform CLI configuration, and skip `terraform init`.
 
 Tests never connect to a real bridge, even when Hue environment variables are set.
 

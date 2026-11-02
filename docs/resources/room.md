@@ -3,16 +3,24 @@
 page_title: "hue_room Resource - hue"
 subcategory: ""
 description: |-
-  Manage a Hue room. Deleting this resource deletes the group from the bridge.
+  Manage a Hue room. Deleting this resource deletes the room from the bridge, and fails while scenes remain in it unless force_destroy is true.
 ---
 
 # hue_room (Resource)
 
-Manage a Hue room. Deleting this resource deletes the group from the bridge.
+Manage a Hue room. Deleting this resource deletes the room from the bridge, and fails while scenes remain in it unless `force_destroy` is true.
 
 ## Example Usage
 
 ```terraform
+# Rooms usually exist in the Hue app already, so import the room and list the
+# devices it contains. A device belongs to one room, so adding a device that is
+# in another room moves it here.
+import {
+  to = hue_room.study
+  id = "55555555-5555-4555-8555-555555555555"
+}
+
 data "hue_device" "desk" {
   id = "22222222-2222-4222-8222-222222222222"
 }
@@ -29,12 +37,13 @@ resource "hue_room" "study" {
 
 ### Required
 
-- `children` (Set of String) Set of device UUIDs.
+- `children` (Set of String) Set of device UUIDs. A device belongs to one room, so adding a device that is in another room moves it here and removes its lights from that room's scenes.
 - `name` (String) Group name.
 
 ### Optional
 
 - `archetype` (String) Hue group archetype. Defaults to other.
+- `force_destroy` (Boolean) The bridge deletes a room's scenes along with it, including scenes created in the Hue app. Unless this is true, deleting the room fails while any scene or smart scene remains in it. Apply the change before deleting the room. Defaults to false.
 
 ### Read-Only
 
