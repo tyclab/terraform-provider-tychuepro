@@ -54,6 +54,21 @@ func TestShowSceneDetails(t *testing.T) {
 	}
 }
 
+// show reports color temperature in kelvin rounded the same way as the provider.
+func TestShowKelvinMatchesProvider(t *testing.T) {
+	data := []json.RawMessage{
+		json.RawMessage(`{"id":"scene","type":"scene","metadata":{"name":"Warm"},"group":{"rid":"zone","rtype":"zone"},"actions":[{"target":{"rid":"light","rtype":"light"},"action":{"color_temperature":{"mirek":370}}}]}`),
+		json.RawMessage(`{"id":"zone","type":"zone","metadata":{"name":"Home"}}`),
+	}
+	var out bytes.Buffer
+	if err := printSceneDetails(data, "scene", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "2703 K (370 mirek)") {
+		t.Fatal(out.String())
+	}
+}
+
 func TestShowCLI(t *testing.T) {
 	for _, args := range [][]string{{"show"}, {"show", "bad"}, {"show", "00000000-0000-0000-0000-000000000000", "--write"}} {
 		if err := runWith(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, dependencies{}); err == nil {
@@ -69,8 +84,10 @@ func TestShowCLI(t *testing.T) {
 		w.Write([]byte(`{"data":[{"id":"00000000-0000-0000-0000-000000000000","type":"scene","metadata":{"name":"Test scene"},"actions":[]}],"errors":[]}`))
 	}))
 	defer server.Close()
+	t.Setenv("HUE_BRIDGE_HOST", "fake.local")
+	t.Setenv("HUE_BRIDGE_ID", "001788fffe000000")
 	t.Setenv("HUE_BRIDGE_APPLICATION_KEY", "test-key")
-	deps := dependencies{newClient: func(string, string) (*hue.Client, error) {
+	deps := dependencies{newClient: func(string, string, string) (*hue.Client, error) {
 		return hue.NewClientWithHTTP(server.URL, "test-key", server.Client())
 	}}
 	var out bytes.Buffer
@@ -80,5 +97,32 @@ func TestShowCLI(t *testing.T) {
 	}
 	if calls != 1 || !strings.Contains(out.String(), "Test scene") {
 		t.Fatalf("requests=%d output=%s", calls, out.String())
+	}
+}
+
+// show flags the extras that the hex swatch does not summarize, and an
+// effects_v2 that stops an effect is not one.
+func TestShowSceneExtras(t *testing.T) {
+	for want, action := range map[string]string{
+		"gradient":   `"gradient":{"points":[{"color":{"xy":{"x":0.3,"y":0.4}}},{"color":{"xy":{"x":0.4,"y":0.4}}}],"mode":"interpolated_palette"}`,
+		"effects":    `"effects":{"effect":"fire"}`,
+		"effects_v2": `"effects_v2":{"action":{"effect":"candle","parameters":{"speed":0.4}}}`,
+		"":           `"effects_v2":{"action":{"effect":"no_effect"}}`,
+	} {
+		data := []json.RawMessage{json.RawMessage(`{"id":"scene","type":"scene","metadata":{"name":"Fireplace"},"group":{"rid":"zone","rtype":"zone"},"actions":[{"target":{"rid":"light","rtype":"light"},"action":{"on":{"on":true},` + action + `}}]}`)}
+		var out bytes.Buffer
+		if err := printSceneDetails(data, "scene", &out); err != nil {
+			t.Fatal(err)
+		}
+		// The action is the last row, and its last column lists the extras.
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		fields := strings.Fields(lines[len(lines)-1])
+		got := fields[len(fields)-1]
+		if got == "-" {
+			got = ""
+		}
+		if got != want {
+			t.Errorf("%s flagged as %q:\n%s", action, got, out.String())
+		}
 	}
 }

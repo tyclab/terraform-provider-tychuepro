@@ -9,6 +9,33 @@ description: |-
 
 Manage device settings, rooms, zones, scenes, smart scenes and behavior instances on a Philips Hue bridge using API v2. This is an independent project, not a Signify product.
 
+Add lights and devices in the Hue app first. The provider manages resources
+that are already registered on the bridge.
+
+## Authentication
+
+The provider connects to one bridge on your local network. It needs the
+bridge's address, its ID and an application key. Set them with
+`HUE_BRIDGE_HOST`, `HUE_BRIDGE_ID` and `HUE_BRIDGE_APPLICATION_KEY`, or with
+the arguments below. The provider connects only to the bridge whose
+certificate carries that ID.
+
+The companion CLI, `hue-tf`, finds the bridge and creates the key:
+
+1. Download `hue-tf` for your platform from the
+   [GitHub releases](https://github.com/akr4/terraform-provider-hue/releases/latest).
+   If macOS says it cannot verify `hue-tf`, run
+   `xattr -d com.apple.quarantine hue-tf`.
+2. Run `hue-tf init` and press the bridge's link button when it asks.
+3. Run the three `export` commands it prints.
+
+Protect the key like a password. If the bridge's address changes,
+`hue-tf discover` prints the current address and ID.
+
+[Getting started](https://github.com/akr4/terraform-provider-hue#getting-started)
+in the README tries a zone and a scene, then imports what you made in the Hue
+app with `hue-tf import-blocks`. The README also lists all `hue-tf` commands.
+
 ## Example Usage
 
 ```terraform
@@ -18,7 +45,12 @@ terraform {
   }
 }
 
-# Set HUE_BRIDGE_HOST and HUE_BRIDGE_APPLICATION_KEY in your environment.
+# The provider reads its settings from the environment. `hue-tf init` prints
+# the commands that set them, for example:
+#
+#   export HUE_BRIDGE_HOST='192.168.1.10'
+#   export HUE_BRIDGE_ID='001788fffe000000'
+#   export HUE_BRIDGE_APPLICATION_KEY='...'
 provider "hue" {}
 ```
 
@@ -28,4 +60,5 @@ provider "hue" {}
 ### Optional
 
 - `application_key` (String, Sensitive) Hue application key. Falls back to HUE_BRIDGE_APPLICATION_KEY.
+- `bridge_id` (String) Bridge ID, 16 hexadecimal digits. The provider connects only to the bridge whose certificate names this ID. `hue-tf init` and `hue-tf discover` print it. Falls back to HUE_BRIDGE_ID.
 - `host` (String) Bridge IP address or hostname, without scheme or port. Falls back to HUE_BRIDGE_HOST.

@@ -7,7 +7,7 @@ builds:
     env: [CGO_ENABLED=0]
     mod_timestamp: '{{ .CommitTimestamp }}'
     flags: [-trimpath]
-    ldflags: ['-s -w']
+    ldflags: ['-s -w -X main.version={{ .Version }}']
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     binary: hue-tf
@@ -20,9 +20,9 @@ archives:
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
   algorithm: sha256
+# The release workflow uploads these files to the hue-tf-vX.Y.Z release. The
+# Registry reads the vX.Y.Z release as the provider.
 release:
-  draft: true
-  # Upload to the draft created by the provider configuration.
-  use_existing_draft: true
+  disable: true
 changelog:
   disable: true

@@ -48,6 +48,7 @@ terraform validate
 
 ```sh
 export HUE_BRIDGE_HOST='192.168.1.10' # 実際の IP またはホスト名に変更
+export HUE_BRIDGE_ID='001788fffe000000' # hue-tf discover が表示する bridge ID に変更
 read -rs 'HUE_BRIDGE_APPLICATION_KEY?Hue application key: '
 printf '\n'
 export HUE_BRIDGE_APPLICATION_KEY
@@ -61,7 +62,7 @@ export HUE_BRIDGE_APPLICATION_KEY
 ```
 
 表示された key を、上記の非表示入力で環境変数に設定します。
-`HUE_BRIDGE_HOST` が設定されていれば探索を省略します。
+`HUE_BRIDGE_HOST` が設定されていれば探索を省略します。そのとき `HUE_BRIDGE_ID` がなければ、bridge が提示した証明書から ID を読み取ります（初回接続時の信頼）。
 mDNS 探索自体も確認する場合は、`init` の実行前に `unset HUE_BRIDGE_HOST` を実行し、
 結果に表示された host を設定します。
 
@@ -169,10 +170,10 @@ scene の `actions` は `target.rid` を map のキーにします。
 | `color_temperature.mirek` | `mirek` |
 
 最初の比較では API の正の値である xy / mirek を使います。
-hex / kelvin は同時に指定しません。API にない属性は省略し、false と 0 は省略しません。
+ケルビンで書く場合は `provider::hue::mirek_from_kelvin` で mirek に変換します。API にない属性は省略し、false と 0 は省略しません。
 色温度が null の場合は `mirek` を省略します。
 シーン画像は管理対象外です。`metadata.image` は送信せず、既存画像には触れません。既存の設定に `image_id` がある場合は削除してください。
-`palette` は省略すると実機の値を維持します。配色を管理する場合は `jsonencode` で明示します。
+`palette` は省略すると実機の値を維持します。配色を管理する場合は `palette = { color = [...] }` のように明示します。
 
 scene の所属 group は既存の UUID を直接指定できます。
 その room / zone を同時に Terraform 管理対象にする必要はありません。

@@ -304,19 +304,18 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 					failure(w, 400, "unknown light")
 					return
 				}
-				if item.Action.Color != nil {
-					if light.Color == nil {
-						failure(w, 400, "light does not support color")
-						return
-					}
-					scene.Actions[i].Action.Color.XY = colors.Round(colors.Clip(item.Action.Color.XY, colors.Gamut(light.Color.GamutType)))
+				if item.Action.Color != nil && light.Color == nil {
+					failure(w, 400, "light does not support color")
+					return
 				}
-				if item.Action.ColorTemperature != nil {
-					if light.ColorTemperature == nil {
-						failure(w, 400, "light does not support color temperature")
-						return
-					}
-					scene.Actions[i].Action.ColorTemperature.Mirek = colors.ClampMirek(item.Action.ColorTemperature.Mirek, light.ColorTemperature.MirekSchema.Min, light.ColorTemperature.MirekSchema.Max)
+				if item.Action.ColorTemperature != nil && light.ColorTemperature == nil {
+					failure(w, 400, "light does not support color temperature")
+					return
+				}
+				// Like a real bridge, keep xy and mirek as sent, even outside the
+				// light's gamut or range, and round brightness to two decimal places.
+				if item.Action.Dimming != nil {
+					scene.Actions[i].Action.Dimming.Brightness = colors.RoundBrightness(item.Action.Dimming.Brightness)
 				}
 			}
 			raw, _ = json.Marshal(scene)
@@ -333,6 +332,21 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delete(items, id)
+		if kind == "room" || kind == "zone" {
+			// Verified on a physical bridge: deleting a room or zone also deletes its
+			// scenes, including ones created in the Hue app, and its smart scenes,
+			// which can take a moment longer.
+			for _, child := range []string{"scene", "smart_scene"} {
+				for childID, raw := range b.resources[child] {
+					var item struct {
+						Group hue.Reference `json:"group"`
+					}
+					if json.Unmarshal(raw, &item) == nil && item.Group.RID == id {
+						delete(b.resources[child], childID)
+					}
+				}
+			}
+		}
 		success(w, []hue.Reference{{RID: id, RType: kind}})
 	default:
 		failure(w, 405, "method not allowed")
